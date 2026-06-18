@@ -19,6 +19,7 @@
   #status { margin: 16px 0; padding: 12px; background: #f0f8ff; border-radius: 4px; display: none; }
   #warnings { margin: 16px 0; padding: 12px; background: #fff3cd; border-radius: 4px; display: none; }
   .skip-notice { color: #c00; font-weight: bold; }
+  small { color: #666; display: block; margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -26,16 +27,17 @@
 
 <div class="section">
   <h2>① 商品マスタ読込</h2>
-  <label>商品マスタCSV（限界利益マスターからエクスポート）</label>
+  <label>商品マスタCSV（「商品マスター」シートをCSVエクスポート）</label>
   <input type="file" id="masterFile" accept=".csv">
-  <label>セット構成CSV</label>
+  <label>セット構成CSV（「セット構成テーブル」シートをCSVエクスポート）</label>
   <input type="file" id="recipeFile" accept=".csv">
 </div>
 
 <div class="section">
-  <h2>② 注文CSV読込（複数選択可）</h2>
-  <label>各モール注文CSV</label>
-  <input type="file" id="orderFiles" accept=".csv" multiple>
+  <h2>② 注文ファイル読込（複数選択可）</h2>
+  <label>各モール注文ファイル</label>
+  <input type="file" id="orderFiles" accept=".csv,.txt" multiple>
+  <small>Amazon未出荷レポート(.txt) / 楽天・メルカリ注文CSV(.csv) に対応</small>
 </div>
 
 <div class="section">
@@ -55,7 +57,7 @@
 <div id="warnings"></div>
 
 <script type="module">
-import { parseOrders, detectMall } from './src/parsers/index.js';
+import { parseOrders } from './src/parsers/index.js';
 import { buildMasterMap, buildRecipeMap, resolveOrders } from './src/normalize.js';
 import { buildTotalList, buildSingleList, shouldSkipMorning,
          renderTotalHTML, renderSingleHTML } from './src/output.js';
@@ -92,9 +94,9 @@ document.getElementById('btnGenerate').addEventListener('click', async () => {
       recipeMap = buildRecipeMap(recipeRows);
     }
 
-    // 注文CSV読込
+    // 注文ファイル読込
     const orderFiles = document.getElementById('orderFiles').files;
-    if (!orderFiles.length) { status.textContent = '❌ 注文CSVを選択してください'; return; }
+    if (!orderFiles.length) { status.textContent = '❌ 注文ファイルを選択してください'; return; }
 
     let allParsed = [];
     for (const file of orderFiles) {
