@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FBMピッキングツール</title>
+<style>
+  body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; }
+  h1 { font-size: 22px; border-bottom: 2px solid #333; padding-bottom: 8px; }
+  .section { margin: 24px 0; padding: 16px; border: 1px solid #ddd; border-radius: 6px; }
+  .section h2 { font-size: 16px; margin: 0 0 12px; }
+  label { display: block; margin: 8px 0 4px; font-weight: bold; }
+  input[type=file] { display: block; margin-bottom: 8px; }
+  input[type=number] { width: 80px; padding: 4px; }
+  button { background: #0066cc; color: white; border: none; padding: 10px 24px;
+           font-size: 15px; border-radius: 4px; cursor: pointer; margin-right: 8px; }
+  button:hover { background: #0052a3; }
+  button.secondary { background: #666; }
+  #status { margin: 16px 0; padding: 12px; background: #f0f8ff; border-radius: 4px; display: none; }
+  #warnings { margin: 16px 0; padding: 12px; background: #fff3cd; border-radius: 4px; display: none; }
+  .skip-notice { color: #c00; font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>📦 FBMピッキングツール</h1>
+
+<div class="section">
+  <h2>① 商品マスタ読込</h2>
+  <label>商品マスタCSV（限界利益マスターからエクスポート）</label>
+  <input type="file" id="masterFile" accept=".csv">
+  <label>セット構成CSV</label>
+  <input type="file" id="recipeFile" accept=".csv">
+</div>
+
+<div class="section">
+  <h2>② 注文CSV読込（複数選択可）</h2>
+  <label>各モール注文CSV</label>
+  <input type="file" id="orderFiles" accept=".csv" multiple>
+</div>
+
+<div class="section">
+  <h2>③ 設定</h2>
+  <label>朝出しスキップ閾値（件数）</label>
+  <input type="number" id="threshold" value="10" min="0" max="999">
+  <small>10:30時点の注文数がこの値以下なら朝出しをスキップし14時の1回のみ出力</small>
+</div>
+
+<div>
+  <button id="btnGenerate">ピッキングリスト生成</button>
+  <button id="btnPrintTotal" class="secondary" style="display:none">トータル印刷</button>
+  <button id="btnPrintSingle" class="secondary" style="display:none">シングル印刷</button>
+</div>
+
+<div id="status"></div>
+<div id="warnings"></div>
+
+<script type="module">
+import { parseOrders, detectMall } from './src/parsers/index.js';
+import { buildMasterMap, buildRecipeMap, resolveOrders } from './src/normalize.js';
+import { buildTotalList, buildSingleList, shouldSkipMorning,
+         renderTotalHTML, renderSingleHTML } from './src/output.js';
+import { WarningCollector, decodeBuffer, parseCSV, csvToObjects } from './src/parsers/base.js';
+
+let totalHTML = null;
+let singleHTML = null;
+
+document.getElementById('btnGenerate').addEventListener('click', async () => {
+  const status = document.getElementById('status');
+  const warningsEl = document.getElementById('warnings');
+  status.style.display = 'block';
+  status.textContent = '処理中...';
+  warningsEl.style.display = 'none';
+
+  try {
+    const warnings = new WarningCollector();
+
+    // マスタ読込
+    const masterFile = document.getElementById('masterFile').files[0];
+    const recipeFile = document.getElementById('recipeFile').files[0];
+    if (!masterFile) { status.textContent = '❌ 商品マスタを選択してください'; return; }
+
+    const masterBuf = await masterFile.arrayBuffer().then(b => new Uint8Array(b));
+    const masterText = decodeBuffer(masterBuf);
+    const masterRows = csvToObjects(parseCSV(masterText));
+    const masterMap = buildMasterMap(masterRows);
+
+    let recipeMap = {};
+    if (recipeFile) {
+      const recipeBuf = await recipeFile.arrayBuffer().then(b => new Uint8Array(b));
+      const recipeText = decodeBuffer(recipeBuf);
+      const recipeRows = csvToObjects(parseCSV(recipeText));
+      recipeMap = buildRecipeMap(recipeRows);
+    }
+
+    // 注文CSV読込
+    const orderFiles = document.getElementById('orderFiles').files;
+    if (!orderFiles.length) { status.textContent = '❌ 注文CSVを選択してください'; return; }
+
+    let allParsed = [];
+    for (const file of orderFiles) {
+      const buf = await file.arrayBuffer().then(b => new Uint8Array(b));
+      const { mall, orders } = parseOrders(buf, warnings);
+      allParsed = allParsed.concat(orders);
+    }
+
+    // 正規化
+    const normalized = resolveOrders(allParsed, masterMap, recipeMap, warnings);
+
+    // 閾値判定
+    const threshold = parseInt(document.getElementById('threshold').value, 10) || 10;
+    const skip = shouldSkipMorning(normalized.length, threshold);
+
+    // リスト生成
+    const today = new Date().toLocaleDateString('ja-JP');
+    const totalList = buildTotalList(normalized);
+    const singleList = buildSingleList(normalized);
+    totalHTML = renderTotalHTML(totalList, today, warnings.getAll());
+    singleHTML = renderSingleHTML(singleList, today);
+
+    // 結果表示
+    let msg = `✅ 処理完了: ${normalized.length}件の出荷対象`;
+    if (skip) msg += ` <span class="skip-notice">（件数閾値${threshold}以下 → 朝出しスキップ推奨）</span>`;
+    status.innerHTML = msg;
+
+    if (warnings.hasWarnings()) {
+      warningsEl.style.display = 'block';
+      warningsEl.innerHTML = `<strong>⚠️ 警告 ${warnings.getAll().length}件</strong><ul>` +
+        warnings.getAll().map(w => `<li>${w}</li>`).join('') + '</ul>';
+    }
+
+    document.getElementById('btnPrintTotal').style.display = 'inline-block';
+    document.getElementById('btnPrintSingle').style.display = 'inline-block';
+
+  } catch (e) {
+    status.textContent = '❌ エラー: ' + e.message;
+    console.error(e);
+  }
+});
+
+document.getElementById('btnPrintTotal').addEventListener('click', () => {
+  if (!totalHTML) return;
+  const w = window.open('', '_blank');
+  w.document.write(totalHTML);
+  w.document.close();
+  w.print();
+});
+
+document.getElementById('btnPrintSingle').addEventListener('click', () => {
+  if (!singleHTML) return;
+  const w = window.open('', '_blank');
+  w.document.write(singleHTML);
+  w.document.close();
+  w.print();
+});
+</script>
+</body>
+</html>
