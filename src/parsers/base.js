@@ -1,11 +1,9 @@
 /**
- * base.js — 文字コード分岐・CSV解析・警告収集
+ * base.js — 文字コード分岐・CSV/TSV解析・警告収集
  */
 
 export function detectEncoding(buffer) {
-  // UTF-8 BOM
   if (buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF) return 'utf-8';
-  // Shift-JIS ヒューリスティック
   for (let i = 0; i < Math.min(buffer.length - 1, 2000); i++) {
     const b = buffer[i];
     if ((b >= 0x81 && b <= 0x9F) || (b >= 0xE0 && b <= 0xFC)) return 'shift-jis';
@@ -17,19 +15,31 @@ export function decodeBuffer(buffer) {
   const enc = detectEncoding(buffer);
   const decoder = new TextDecoder(enc);
   let text = decoder.decode(buffer);
-  // BOM除去
   if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
   return text;
 }
 
-export function parseCSV(text) {
+export function detectDelimiter(text) {
+  // 先頭行のタブ数とカンマ数を比較して判定
+  const firstLine = text.split('\n')[0];
+  const tabs = (firstLine.match(/\t/g) || []).length;
+  const commas = (firstLine.match(/,/g) || []).length;
+  return tabs > commas ? '\t' : ',';
+}
+
+export function parseCSV(text, delimiter) {
+  const delim = delimiter || detectDelimiter(text);
   const rows = [];
   const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
   for (const line of lines) {
     if (!line.trim()) continue;
-    rows.push(parseCSVLine(line));
+    rows.push(delim === '\t' ? parseTSVLine(line) : parseCSVLine(line));
   }
   return rows;
+}
+
+function parseTSVLine(line) {
+  return line.split('\t').map(f => f.trim());
 }
 
 function parseCSVLine(line) {
